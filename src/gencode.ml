@@ -90,70 +90,71 @@ let identifier_of_description s =
 let just_innard s = s |> Soup.trimmed_texts |> String.concat ""
 
 let parse_row (l, category, sub_category) el =
-  match Soup.select_one "th" el with
-  | Some el -> (
-    if List.mem "rchars" (Soup.classes el) then
-      (* not an emoji row *)
-      (l, category, sub_category)
-    else
-      (* title row *)
-      let title =
-        match Soup.select_one "a" el with
-        | None -> failwith "no link in category row"
-        | Some a -> (
-          match Soup.attribute "name" a with
-          | None -> failwith "no name in category link"
-          | Some name -> identifier_of_description @@ String.trim name )
-      in
-      match Soup.classes el with
-      | [] -> failwith "no class name"
-      | name :: _l -> (
-        match name with
-        | "bighead" -> (l, title, "")
-        | "mediumhead" -> (l, category, title)
-        | _ -> failwith "invalid class name" ) )
-  | None -> (
-    match Soup.select_one "td.andr > a > img" el with
-    | None -> (* not an emoji row *) (l, category, sub_category)
-    | Some img ->
-      let emoji =
-        match Soup.attribute "alt" img with
-        | None -> failwith "no alt on emoji img"
-        | Some emoji -> emoji
-      in
-      let description =
-        match Soup.select_one "td.name" el with
-        | None -> failwith "no description found"
-        | Some el -> just_innard el
-      in
-      (* Recently-added emoji are marked by a ⊛ in the name ⊛_⊛^^ *)
-      let prefix = "⊛" in
-      let description =
-        if String.starts_with ~prefix description then
-          (* its not 1 *)
-          let prefix_len = String.length prefix in
-          String.trim
-          @@ String.sub description prefix_len
-               (String.length description - prefix_len)
-        else description
-      in
-      let name = identifier_of_description description in
-      let code_point =
-        match Soup.select_one "td.code > a" el with
-        | None -> failwith "no code_point found"
-        | Some el -> just_innard el
-      in
+  match Soup.select_one "td.andr > a > img" el with
+  | Some img ->
+    let emoji =
+      match Soup.attribute "alt" img with
+      | None -> failwith "no alt on emoji img"
+      | Some emoji -> emoji
+    in
+    let description =
+      match Soup.select_one "td.name" el with
+      | None -> failwith "no description found"
+      | Some el -> just_innard el
+    in
+    (* Recently-added emoji are marked by a ⊛ in the name ⊛_⊛^^ *)
+    let prefix = "⊛" in
+    let description =
+      if String.starts_with ~prefix description then
+        (* its not 1 *)
+        let prefix_len = String.length prefix in
+        String.trim
+        @@ String.sub description prefix_len
+             (String.length description - prefix_len)
+      else description
+    in
+    let name = identifier_of_description description in
+    let code_point =
+      match Soup.select_one "td.code > a" el with
+      | None -> failwith "no code_point found"
+      | Some el -> just_innard el
+    in
 
-      ( { code_point
-        ; emoji
-        ; description
-        ; name
-        ; category = "category_" ^ category
-        ; sub_category = "sub_category_" ^ sub_category
-        }
-        :: l
-      , category
-      , sub_category ) )
+    ( { code_point
+      ; emoji
+      ; description
+      ; name
+      ; category = "category_" ^ category
+      ; sub_category = "sub_category_" ^ sub_category
+      }
+      :: l
+    , category
+    , sub_category )
+  | None -> (
+    (* not an emoji row *)
+    match Soup.select_one "th" el with
+    | Some el -> (
+      if List.mem "rchars" (Soup.classes el) then
+        (* not an emoji row *)
+        (l, category, sub_category)
+      else
+        (* title row *)
+        let title =
+          match Soup.select_one "a" el with
+          | None -> failwith "no link in category row"
+          | Some a -> (
+            match Soup.attribute "name" a with
+            | None -> failwith "no name in category link"
+            | Some name -> identifier_of_description @@ String.trim name )
+        in
+        match Soup.classes el with
+        | [] -> failwith "no class name"
+        | name :: _l -> (
+          match name with
+          | "bighead" -> (l, title, "")
+          | "mediumhead" -> (l, category, title)
+          | _ -> failwith "invalid class name" ) )
+    | None -> failwith "invalid node" )
 
 let file = "emoji-list.html"
 
@@ -179,6 +180,27 @@ let cats_table = Hashtbl.create 512
 let subcats_table = Hashtbl.create 512
 
 let () =
+  let file = "emoji-list.html" in
+  let chan = open_in file in
+  let parsed =
+    Fun.protect
+      ~finally:(fun () -> close_in chan)
+      (fun () -> Soup.read_channel chan |> Soup.parse)
+  in
+
+  let table = Soup.select "table > tbody > tr" parsed in
+  let init = ([], "", "") in
+
+  let emojis, _last_category, _last_sub_category =
+    Soup.fold parse_row init table
+  in
+  let emojis = List.rev emojis in
+
+  (* category_name -> (emoji_name -> unit) *)
+  let cats_table = Hashtbl.create 512 in
+  (* sub_category_name -> (emoji_name -> unit) *)
+  let subcats_table = Hashtbl.create 512 in
+
   List.iter
     (fun { category; sub_category; name; _ } ->
       let cat_table =
