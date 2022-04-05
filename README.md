@@ -2,24 +2,25 @@ emoji
 ------
 
 Single OCaml file containing byte sequences of all the Unicode emoji 
-characters and sequences sourced from [here](http://www.unicode.org/emoji/charts/emoji-list.html )
-
-```
-$ opam install emoji
-```
-
-You can see them by printing to the screen: 
+characters and sequences sourced from [here](https://unicode.org/Public/emoji/14.0/emoji-test.txt)
+You can print them: 
 ```
 print_endline Emoji.troll
 ```
 🧌
 
-You can also get all emojis from the same category or subcategory:
+You can get all emojis from the same category or subcategory:
 ```
 let best_animals = Emoji.sub_category_animal_reptile in
 Array.iter print_string best_animals;
 ```
 🐉🐊🦎🦖🦕🐢🐲🐍
+
+Emoji include emojis with skin tones:
+```
+print_endline Emoji.raised_fist_dark_skin_tone
+```
+✊🏿
 
 Using `ocp-browser` shows the emoji
 
