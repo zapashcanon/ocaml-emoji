@@ -87,95 +87,91 @@ let identifier_of_description s =
   end;
   Buffer.contents buf |> wrap_leading_ints |> deduplicate_underscores
 
-let just_innard s = s |> Soup.trimmed_texts |> String.concat ""
-
-let parse_row (l, category, sub_category) el =
-  match Soup.select_one "th" el with
-  | Some el -> (
-    if List.mem "rchars" (Soup.classes el) then
-      (* not an emoji row *)
-      (l, category, sub_category)
-    else
-      (* title row *)
-      let title =
-        match Soup.select_one "a" el with
-        | None -> failwith "no link in category row"
-        | Some a -> (
-          match Soup.attribute "name" a with
-          | None -> failwith "no name in category link"
-          | Some name -> identifier_of_description @@ String.trim name )
-      in
-      match Soup.classes el with
-      | [] -> failwith "no class name"
-      | name :: _l -> (
-        match name with
-        | "bighead" -> (l, title, "")
-        | "mediumhead" -> (l, category, title)
-        | _ -> failwith "invalid class name" ) )
-  | None -> (
-    match Soup.select_one "img" el with
-    | None -> (* not an emoji row *) (l, category, sub_category)
-    | Some img ->
-      let emoji =
-        match Soup.attribute "alt" img with
-        | None -> failwith "no alt on emoji img"
-        | Some emoji -> emoji
-      in
-      let description =
-        match Soup.select_one "td.name" el with
-        | None -> failwith "no description found"
-        | Some el -> just_innard el
-      in
-      (* Recently-added emoji are marked by a ⊛ in the name ⊛_⊛^^ *)
-      let prefix = "⊛" in
-      let description =
-        if String.starts_with ~prefix description then
-          (* its not 1 *)
-          let prefix_len = String.length prefix in
-          String.trim
-          @@ String.sub description prefix_len
-               (String.length description - prefix_len)
-        else description
-      in
-      let name = identifier_of_description description in
+let parse_line (l, category, sub_category) line =
+  let group_prefix = "# group: " in
+  let group_prefix_len = String.length group_prefix in
+  let subgroup_prefix = "# subgroup: " in
+  let subgroup_prefix_len = String.length subgroup_prefix in
+  let line_len = String.length line in
+  let fully_qualified_string = "fully-qualified" in
+  if String.starts_with ~prefix:group_prefix line then
+    (* change of category line *)
+    let group =
+      String.sub line group_prefix_len (line_len - group_prefix_len)
+    in
+    let category = identifier_of_description @@ String.trim group in
+    (l, category, sub_category)
+  else if String.starts_with ~prefix:subgroup_prefix line then
+    (* change of sub category line *)
+    let subgroup =
+      String.sub line subgroup_prefix_len (line_len - subgroup_prefix_len)
+    in
+    let sub_category = identifier_of_description @@ String.trim subgroup in
+    (l, category, sub_category)
+  else if String.starts_with ~prefix:"#" line then (l, category, sub_category)
+  else if String.trim line = "" then (* empty line *)
+    (l, category, sub_category)
+  else
+    (* its an emoji line!*)
+    match String.split_on_char ';' line with
+    | [ code_point; rest ] -> (
       let code_point =
-        match Soup.select_one "td.code > a" el with
-        | None -> failwith "no code_point found"
-        | Some el -> just_innard el
+        "U+" ^ String.concat " U+" @@ String.split_on_char ' '
+        @@ String.trim code_point
       in
+      let rest = String.trim rest in
+      let handle_infos infos =
+        match String.split_on_char ' ' infos with
+        | "" :: emoji :: _magic_number :: description_list ->
+          let description = String.concat " " description_list in
+          let name = identifier_of_description description in
 
-      ( { code_point
-        ; emoji
-        ; description
-        ; name
-        ; category = "category_" ^ category
-        ; sub_category = "sub_category_" ^ sub_category
-        }
-        :: l
-      , category
-      , sub_category ) )
+          ( { code_point
+            ; emoji
+            ; description
+            ; name
+            ; category = Format.sprintf "category_%s" category
+            ; sub_category = Format.sprintf "sub_category_%s" sub_category
+            }
+            :: l
+          , category
+          , sub_category )
+        | _invalid_line -> failwith (Format.sprintf "invalid line ' ': %s" line)
+      in
+      match String.split_on_char '#' rest with
+      | [ qualified; infos ] ->
+        if String.trim qualified = fully_qualified_string then
+          handle_infos infos
+        else
+          (* we ignore unqualified/minimally-qualified emojis *)
+          (l, category, sub_category)
+      | [ qualified; " "; infos; "" ] ->
+        (* this is for the keycaps emoji *)
+        if String.trim qualified = fully_qualified_string then
+          handle_infos (Format.sprintf " #%s#" infos)
+        else (l, category, sub_category)
+      | _invalid_line -> failwith (Format.sprintf "invalid line '#': %s" line) )
+    | _invalid_line -> failwith (Format.sprintf "invalid line for ';': %s" line)
 
-let parse file =
+let read file =
   let chan = open_in file in
   Fun.protect
     ~finally:(fun () -> close_in chan)
-    (fun () -> Soup.read_channel chan |> Soup.parse)
+    (fun () ->
+      let try_read () = try Some (input_line chan) with End_of_file -> None in
+      let rec loop acc =
+        match try_read () with
+        | Some s -> loop (s :: acc)
+        | None -> List.rev acc
+      in
+      loop [] )
 
-let parsed = parse "emoji-list.html"
-
-let parsed_skin_tones = parse "emoji-list-skin-tones.html"
-
-let table = Soup.to_list @@ Soup.select "table > tbody > tr" parsed
-
-let table_skin_tones =
-  Soup.to_list @@ Soup.select "table > tbody > tr" parsed_skin_tones
-
-let table = table_skin_tones @ table
+let lines = read "emoji-test.txt"
 
 let init = ([], "", "")
 
 let emojis, _last_category, _last_sub_category =
-  List.fold_left parse_row init table
+  List.fold_left parse_line init lines
 
 let emojis = List.sort (fun e1 e2 -> compare e1.name e2.name) emojis
 

@@ -1,7 +1,7 @@
 (executable
  (name gencode)
  (modules gencode)
- (libraries lambdasoup uutf))
+ (libraries uutf))
 
 (library
  (modules emoji)
@@ -13,17 +13,17 @@
  (libraries lwt cohttp-lwt-unix))
 
 (rule
- (target emoji-list.html)
+ (target emoji-test.txt)
  (deps updatelist.exe)
  (mode promote)
  (action
   (with-stdout-to
-   emoji-list.html
+   emoji-test.txt
    (run ./updatelist.exe))))
 
 (rule
  (target emoji.ml)
- (deps gencode.exe emoji-list.html)
+ (deps gencode.exe emoji-test.txt)
  (action
   (with-stdout-to
    emoji.ml
